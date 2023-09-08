@@ -1,0 +1,108 @@
+alias: Media player save/restore w/fade
+sequence:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ state_attr( target_player, 'volume_level')|float(0) > 0 }}"
+          - condition: template
+            value_template: "{{ mode == 'Save' }}"
+        sequence:
+          - service: input_number.set_value
+            data:
+              value: "{{ state_attr( target_player, 'volume_level')|float(0)}}"
+            target:
+              entity_id: "{{ save_helper }}"
+  - repeat:
+      while:
+        - condition: template
+          value_template: "{{ repeat.index < total_steps }}"
+        - condition: template
+          value_template: >-
+            {{ (((state_attr(target_player, "volume_level") |float(0)) -
+            target_volume) | abs) > 0.001 }}
+      sequence:
+        - service: media_player.volume_set
+          data_template:
+            entity_id: "{{ target_player }}"
+            volume_level: >
+              {% set t = repeat.index / total_steps %}  {% if curve ==
+              'logarithmic' %}
+                {{ (start_volume + (t / (1 + (1 - t))) * start_diff) | float(0) }}
+              {% elif curve == 'bezier' %}
+                {{ (start_volume + (t * t * (3 - 2 * t)) * start_diff) | float(0) }}
+              {% else %}
+                {{ (start_volume + t * start_diff) | float(0) }}
+              {% endif %}
+        - delay: "00:00:00.1"
+  - service: media_player.volume_set
+    data_template:
+      entity_id: "{{ target_player }}"
+      volume_level: "{{ target_volume }}"
+    enabled: true
+mode: parallel
+fields:
+  target_player:
+    name: Target media player
+    description: Target media player of volume fade.
+    required: true
+    example: media_player.example_speaker
+    selector:
+      entity:
+        domain: media_player
+  save_helper:
+    name: Input Number to save volume
+    description: Must be range 0 to 1, step size 0.01.
+    required: true
+    example: input_number.example_speaker_volume
+    selector:
+      entity:
+        filter:
+          domain: input_number
+  duration:
+    name: Fade duration
+    description: Length of time in seconds the fade should take.
+    required: true
+    example: "2"
+    selector:
+      number:
+        mode: box
+        min: 0
+        max: 100000
+        unit_of_measurement: s
+  curve:
+    name: Fade curve algorithm
+    description: Shape of the fade curve to apply.
+    required: true
+    example: logarithmic
+    selector:
+      select:
+        options:
+          - logarithmic
+          - bezier
+          - linear
+  mode:
+    name: Fade Direction
+    description: Save or Restore volume
+    required: true
+    example: Save
+    selector:
+      select:
+        options:
+          - Save
+          - Restore
+variables:
+  steps_per_second: 10
+  target_volume: >-
+    {% if( mode == "Save" ) %}
+      0
+    {% elif( mode == "Restore" and ( ( state_attr( target_player,
+    'volume_level')|float(0)) < 0.01 )) %}
+      {{ states( save_helper ) }}
+    {% else %}
+      {{ state_attr( target_player, 'volume_level')|float(0) }}
+    {% endif %}
+  total_steps: "{{ (steps_per_second * duration) | int(0) }}"
+  start_volume: "{{ state_attr(target_player, 'volume_level') | float(0) }}"
+  start_diff: "{{ (target_volume - start_volume) | float(0) }}"
+icon: mdi:tune-vertical
+max: 10
